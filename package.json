@@ -1,0 +1,62 @@
+{
+    "author": "Chris Hardwick",
+    "dependencies": {
+        "@rebble/clay": "^1.0.0"
+    },
+    "keywords": [],
+    "name": "basicopenhab",
+    "pebble": {
+        "capabilities": [
+            "configurable"
+        ],
+        "displayName": "BasicOpenHab",
+        "enableMultiJS": true,
+        "messageKeys": [
+            "OpenhabServer[25]",
+            "OpenhabPort[5]",
+            "ItemTitle1[20]",
+            "ItemName1[20]",
+            "ItemTitle2[20]",
+            "ItemName2[20]",
+            "ItemTitle3[20]",
+            "ItemName3[20]",
+            "ItemTitle4[20]",
+            "ItemName4[20]",
+            "CommandIndex[20]",
+            "CommandValue[20]",
+            "Status[20]",
+            "ItemTitle5[20]",
+            "ItemName5[20]",
+            "ItemTitle6[20]",
+            "ItemName6[20]",
+            "ItemTitle7[20]",
+            "ItemName7[20]",
+            "ItemTitle8[20]",
+            "ItemName8[20]",
+            "ItemTitle9[20]",
+            "ItemName9[20]",
+            "ItemTitle10[20]",
+            "ItemName10[20]",
+            "ItemCount[2]"
+        ],
+        "projectType": "native",
+        "resources": {
+            "media": []
+        },
+        "sdkVersion": "3",
+        "targetPlatforms": [
+            "aplite",
+            "basalt",
+            "chalk",
+            "diorite",
+            "emery",
+            "gabbro",
+            "flint"
+        ],
+        "uuid": "04b919ab-03be-4127-956b-d09c15d56057",
+        "watchapp": {
+            "watchface": false
+        }
+    },
+    "version": "1.0.1"
+}
