@@ -1,0 +1,64 @@
+{
+  "name": "openhab-controls",
+  "author": "Chris Hardwick",
+  "version": "1.1",
+  "keywords": [
+    "pebble-app"
+  ],
+  "private": true,
+  "dependencies": {
+    "@rebble/clay": "^1.0.4"
+  },
+  "pebble": {
+    "displayName": "openHAB",
+    "uuid": "69de9c51-b697-497d-86d6-0fab259371bf",
+    "sdkVersion": "3",
+    "enableMultiJS": true,
+    "targetPlatforms": [
+      "aplite",
+      "basalt",
+      "chalk",
+      "diorite"
+    ],
+    "watchapp": {
+      "watchface": false
+    },
+    "messageKeys": [
+      "OpenhabServer",
+      "OpenhabPort",
+
+      "ItemTitle1",
+      "ItemName1",
+      "ItemTitle2",
+      "ItemName2",
+      "ItemTitle3",
+      "ItemName3",
+      "ItemTitle4",
+      "ItemName4",
+      "ItemTitle5",
+      "ItemName5",
+      "ItemTitle6",
+      "ItemName6",
+      "ItemTitle7",
+      "ItemName7",
+      "ItemTitle8",
+      "ItemName8",
+      "ItemTitle9",
+      "ItemName9",
+      "ItemTitle10",
+      "ItemName10",
+
+      "ItemCount",
+
+      "CommandIndex",
+      "CommandValue",
+      "Status",
+
+      "StateIndex",
+      "StateValue"
+    ],
+    "resources": {
+      "media": []
+    }
+  }
+}

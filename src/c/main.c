@@ -1,9 +1,130 @@
 #include <pebble.h>
 #include <stdlib.h>
 
+/*
+  Fixed AppMessage key layout.
+
+  These #ifndef blocks allow the app to compile even if CloudPebble does not
+  generate MESSAGE_KEY_* constants from the PebbleKit JS Message Keys screen.
+
+  They must match appinfo.json/appKeys and index.js FALLBACK_KEYS.
+*/
+
+#ifndef MESSAGE_KEY_OpenhabServer
+#define MESSAGE_KEY_OpenhabServer 0
+#endif
+
+#ifndef MESSAGE_KEY_OpenhabPort
+#define MESSAGE_KEY_OpenhabPort 1
+#endif
+
+#ifndef MESSAGE_KEY_ItemTitle1
+#define MESSAGE_KEY_ItemTitle1 2
+#endif
+
+#ifndef MESSAGE_KEY_ItemName1
+#define MESSAGE_KEY_ItemName1 3
+#endif
+
+#ifndef MESSAGE_KEY_ItemTitle2
+#define MESSAGE_KEY_ItemTitle2 4
+#endif
+
+#ifndef MESSAGE_KEY_ItemName2
+#define MESSAGE_KEY_ItemName2 5
+#endif
+
+#ifndef MESSAGE_KEY_ItemTitle3
+#define MESSAGE_KEY_ItemTitle3 6
+#endif
+
+#ifndef MESSAGE_KEY_ItemName3
+#define MESSAGE_KEY_ItemName3 7
+#endif
+
+#ifndef MESSAGE_KEY_ItemTitle4
+#define MESSAGE_KEY_ItemTitle4 8
+#endif
+
+#ifndef MESSAGE_KEY_ItemName4
+#define MESSAGE_KEY_ItemName4 9
+#endif
+
+#ifndef MESSAGE_KEY_ItemTitle5
+#define MESSAGE_KEY_ItemTitle5 10
+#endif
+
+#ifndef MESSAGE_KEY_ItemName5
+#define MESSAGE_KEY_ItemName5 11
+#endif
+
+#ifndef MESSAGE_KEY_ItemTitle6
+#define MESSAGE_KEY_ItemTitle6 12
+#endif
+
+#ifndef MESSAGE_KEY_ItemName6
+#define MESSAGE_KEY_ItemName6 13
+#endif
+
+#ifndef MESSAGE_KEY_ItemTitle7
+#define MESSAGE_KEY_ItemTitle7 14
+#endif
+
+#ifndef MESSAGE_KEY_ItemName7
+#define MESSAGE_KEY_ItemName7 15
+#endif
+
+#ifndef MESSAGE_KEY_ItemTitle8
+#define MESSAGE_KEY_ItemTitle8 16
+#endif
+
+#ifndef MESSAGE_KEY_ItemName8
+#define MESSAGE_KEY_ItemName8 17
+#endif
+
+#ifndef MESSAGE_KEY_ItemTitle9
+#define MESSAGE_KEY_ItemTitle9 18
+#endif
+
+#ifndef MESSAGE_KEY_ItemName9
+#define MESSAGE_KEY_ItemName9 19
+#endif
+
+#ifndef MESSAGE_KEY_ItemTitle10
+#define MESSAGE_KEY_ItemTitle10 20
+#endif
+
+#ifndef MESSAGE_KEY_ItemName10
+#define MESSAGE_KEY_ItemName10 21
+#endif
+
+#ifndef MESSAGE_KEY_ItemCount
+#define MESSAGE_KEY_ItemCount 22
+#endif
+
+#ifndef MESSAGE_KEY_CommandIndex
+#define MESSAGE_KEY_CommandIndex 23
+#endif
+
+#ifndef MESSAGE_KEY_CommandValue
+#define MESSAGE_KEY_CommandValue 24
+#endif
+
+#ifndef MESSAGE_KEY_Status
+#define MESSAGE_KEY_Status 25
+#endif
+
+#ifndef MESSAGE_KEY_StateIndex
+#define MESSAGE_KEY_StateIndex 26
+#endif
+
+#ifndef MESSAGE_KEY_StateValue
+#define MESSAGE_KEY_StateValue 27
+#endif
+
 #define MAX_ITEMS 10
-#define TITLE_LEN 20
-#define ITEM_LEN  20
+#define TITLE_LEN 32
+#define ITEM_LEN  48
 
 typedef struct {
   char title[TITLE_LEN];
@@ -20,10 +141,12 @@ static OpenhabItem s_items[MAX_ITEMS];
 
 static char s_openhab_server[64] = "192.168.1.69";
 static char s_openhab_port[8] = "8080";
-
 static int s_item_count = 4;
 
 static char s_status_buffer[64];
+
+static int s_pending_item_index = -1;
+static bool s_pending_previous_state = false;
 
 static void set_status(const char *text) {
   snprintf(s_status_buffer, sizeof(s_status_buffer), "%s", text);
@@ -136,13 +259,25 @@ static void send_openhab_command(int item_index) {
     return;
   }
 
+  if (s_pending_item_index >= 0) {
+    set_status("Busy...");
+    vibes_short_pulse();
+    return;
+  }
+
+  s_pending_item_index = item_index;
+  s_pending_previous_state = s_items[item_index].state;
+
   s_items[item_index].state = !s_items[item_index].state;
 
   DictionaryIterator *iter;
   AppMessageResult result = app_message_outbox_begin(&iter);
 
   if (result != APP_MSG_OK) {
+    s_items[item_index].state = s_pending_previous_state;
+    s_pending_item_index = -1;
     set_status("Outbox failed");
+    menu_layer_reload_data(s_menu_layer);
     return;
   }
 
@@ -166,6 +301,8 @@ static void send_openhab_command(int item_index) {
 
     text_layer_set_text(s_status_layer, s_status_buffer);
   } else {
+    s_items[item_index].state = s_pending_previous_state;
+    s_pending_item_index = -1;
     set_status("Send failed");
   }
 
@@ -200,7 +337,11 @@ static void menu_draw_row_callback(
     return;
   }
 
-  const char *state_text = s_items[real_index].state ? "Currently ON" : "Currently OFF";
+  const char *state_text = s_items[real_index].state ? "ON" : "OFF";
+
+  if (s_pending_item_index == real_index) {
+    state_text = s_items[real_index].state ? "Sending ON..." : "Sending OFF...";
+  }
 
   menu_cell_basic_draw(
     ctx,
@@ -219,27 +360,92 @@ static void menu_select_callback(MenuLayer *menu_layer, MenuIndex *cell_index, v
   }
 }
 
+static void handle_status_message(DictionaryIterator *iterator) {
+  Tuple *status_tuple = dict_find(iterator, MESSAGE_KEY_Status);
+
+  if (!status_tuple) {
+    return;
+  }
+
+  int status = tuple_to_int(status_tuple, 0);
+
+  if (status == 1) {
+    set_status("openHAB command OK");
+    vibes_short_pulse();
+    s_pending_item_index = -1;
+  } else {
+    if (s_pending_item_index >= 0 && s_pending_item_index < MAX_ITEMS) {
+      s_items[s_pending_item_index].state = s_pending_previous_state;
+    }
+
+    s_pending_item_index = -1;
+
+    set_status("openHAB command failed");
+    vibes_double_pulse();
+    menu_layer_reload_data(s_menu_layer);
+  }
+}
+
+static bool handle_state_message(DictionaryIterator *iterator) {
+  Tuple *state_index_tuple = dict_find(iterator, MESSAGE_KEY_StateIndex);
+  Tuple *state_value_tuple = dict_find(iterator, MESSAGE_KEY_StateValue);
+
+  if (!state_index_tuple || !state_value_tuple) {
+    return false;
+  }
+
+  int state_index = tuple_to_int(state_index_tuple, -1);
+  int state_value = tuple_to_int(state_value_tuple, 0);
+
+  if (state_index >= 0 && state_index < MAX_ITEMS) {
+    s_items[state_index].state = state_value == 1;
+
+    if (s_pending_item_index == state_index) {
+      s_pending_item_index = -1;
+    }
+
+    menu_layer_reload_data(s_menu_layer);
+
+    snprintf(
+      s_status_buffer,
+      sizeof(s_status_buffer),
+      "%s is %s",
+      s_items[state_index].title,
+      s_items[state_index].state ? "ON" : "OFF"
+    );
+
+    text_layer_set_text(s_status_layer, s_status_buffer);
+  }
+
+  return true;
+}
+
 static void inbox_received_callback(DictionaryIterator *iterator, void *context) {
   Tuple *status_tuple = dict_find(iterator, MESSAGE_KEY_Status);
 
   if (status_tuple) {
-    int status = tuple_to_int(status_tuple, 0);
-
-    if (status == 1) {
-      set_status("openHAB command OK");
-      vibes_short_pulse();
-    } else {
-      set_status("openHAB command failed");
-      vibes_double_pulse();
-    }
-
+    handle_status_message(iterator);
     return;
   }
 
-  update_string_from_tuple(dict_find(iterator, MESSAGE_KEY_OpenhabServer), s_openhab_server, sizeof(s_openhab_server));
-  update_string_from_tuple(dict_find(iterator, MESSAGE_KEY_OpenhabPort), s_openhab_port, sizeof(s_openhab_port));
+  if (handle_state_message(iterator)) {
+    return;
+  }
+
+  update_string_from_tuple(
+    dict_find(iterator, MESSAGE_KEY_OpenhabServer),
+    s_openhab_server,
+    sizeof(s_openhab_server)
+  );
+
+  update_string_from_tuple(
+    dict_find(iterator, MESSAGE_KEY_OpenhabPort),
+    s_openhab_port,
+    sizeof(s_openhab_port)
+  );
 
   Tuple *item_count_tuple = dict_find(iterator, MESSAGE_KEY_ItemCount);
+
   if (item_count_tuple) {
     s_item_count = tuple_to_int(item_count_tuple, s_item_count);
   }
@@ -275,8 +481,10 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
   update_string_from_tuple(dict_find(iterator, MESSAGE_KEY_ItemName10),  s_items[9].item_name, ITEM_LEN);
 
   refresh_enabled_items();
-  menu_layer_reload_data(s_menu_layer);
 
+  s_pending_item_index = -1;
+
+  menu_layer_reload_data(s_menu_layer);
   set_status("Settings updated");
 }
 
@@ -285,11 +493,16 @@ static void inbox_dropped_callback(AppMessageResult reason, void *context) {
 }
 
 static void outbox_failed_callback(DictionaryIterator *iterator, AppMessageResult reason, void *context) {
+  if (s_pending_item_index >= 0 && s_pending_item_index < MAX_ITEMS) {
+    s_items[s_pending_item_index].state = s_pending_previous_state;
+    s_pending_item_index = -1;
+    menu_layer_reload_data(s_menu_layer);
+  }
+
   set_status("Outbox failed");
 }
 
 static void outbox_sent_callback(DictionaryIterator *iterator, void *context) {
-  // Message sent to phone-side JS.
 }
 
 static void main_window_load(Window *window) {
@@ -297,8 +510,8 @@ static void main_window_load(Window *window) {
   GRect bounds = layer_get_bounds(window_layer);
 
   GRect menu_frame = GRect(0, 0, bounds.size.w, bounds.size.h - 24);
-  s_menu_layer = menu_layer_create(menu_frame);
 
+  s_menu_layer = menu_layer_create(menu_frame);
   menu_layer_set_click_config_onto_window(s_menu_layer, window);
 
   menu_layer_set_callbacks(s_menu_layer, NULL, (MenuLayerCallbacks) {
@@ -318,6 +531,7 @@ static void main_window_load(Window *window) {
   text_layer_set_font(s_status_layer, fonts_get_system_font(FONT_KEY_GOTHIC_14));
   text_layer_set_text_alignment(s_status_layer, GTextAlignmentCenter);
   text_layer_set_text(s_status_layer, "Ready");
+
   layer_add_child(window_layer, text_layer_get_layer(s_status_layer));
 }
 

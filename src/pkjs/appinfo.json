@@ -1,0 +1,55 @@
+{
+  "uuid": "69de9c51-b697-497d-86d6-0fab259371bf",
+  "shortName": "openHAB",
+  "longName": "openHAB Controls",
+  "companyName": "Chris Hardwick",
+  "versionLabel": "1.1",
+  "sdkVersion": "3",
+  "targetPlatforms": [
+    "aplite",
+    "basalt",
+    "chalk",
+    "diorite"
+  ],
+  "watchapp": {
+    "watchface": false
+  },
+  "appKeys": {
+    "OpenhabServer": 0,
+    "OpenhabPort": 1,
+
+    "ItemTitle1": 2,
+    "ItemName1": 3,
+    "ItemTitle2": 4,
+    "ItemName2": 5,
+    "ItemTitle3": 6,
+    "ItemName3": 7,
+    "ItemTitle4": 8,
+    "ItemName4": 9,
+    "ItemTitle5": 10,
+    "ItemName5": 11,
+    "ItemTitle6": 12,
+    "ItemName6": 13,
+    "ItemTitle7": 14,
+    "ItemName7": 15,
+    "ItemTitle8": 16,
+    "ItemName8": 17,
+    "ItemTitle9": 18,
+    "ItemName9": 19,
+    "ItemTitle10": 20,
+    "ItemName10": 21,
+
+    "ItemCount": 22,
+
+    "CommandIndex": 23,
+    "CommandValue": 24,
+    "Status": 25,
+
+    "StateIndex": 26,
+    "StateValue": 27
+  },
+  "resources": {
+    "media": []
+  },
+  "capabilities": []
+}

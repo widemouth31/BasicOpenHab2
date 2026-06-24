@@ -2,20 +2,50 @@ var Clay = require('@rebble/clay');
 var clayConfig = require('./config');
 var clay = new Clay(clayConfig);
 
+var ANALYTICS_URL = "http://xxx.xxx.xx.xxx:8787/event";
+var ANALYTICS_TOKEN = "6f9f1d8e-";
+
 /*
-  CloudPebble/PebbleKit JS in your environment is not exposing MessageKeys.
-  These fallback numeric keys are based on your latest log:
+  Fixed AppMessage key layout.
 
-    Payload raw: {"10190":1,"10210":1}
-
-  So:
-    10190 = CommandIndex
-    10210 = CommandValue
+  These values must match:
+    - appinfo.json appKeys
+    - package.json pebble.messageKeys order
+    - main.c MESSAGE_KEY_* fallback defines
 */
 var FALLBACK_KEYS = {
-  CommandIndex: '10190',
-  CommandValue: '10210',
-  Status: null
+  OpenhabServer: '0',
+  OpenhabPort: '1',
+
+  ItemTitle1: '2',
+  ItemName1: '3',
+  ItemTitle2: '4',
+  ItemName2: '5',
+  ItemTitle3: '6',
+  ItemName3: '7',
+  ItemTitle4: '8',
+  ItemName4: '9',
+  ItemTitle5: '10',
+  ItemName5: '11',
+  ItemTitle6: '12',
+  ItemName6: '13',
+  ItemTitle7: '14',
+  ItemName7: '15',
+  ItemTitle8: '16',
+  ItemName8: '17',
+  ItemTitle9: '18',
+  ItemName9: '19',
+  ItemTitle10: '20',
+  ItemName10: '21',
+
+  ItemCount: '22',
+
+  CommandIndex: '23',
+  CommandValue: '24',
+  Status: '25',
+
+  StateIndex: '26',
+  StateValue: '27'
 };
 
 var DEFAULT_SETTINGS = {
@@ -54,6 +84,53 @@ var DEFAULT_SETTINGS = {
   ItemName10: ''
 };
 
+var watchMessageQueue = [];
+var watchMessageBusy = false;
+
+function queueWatchMessage(msg, description) {
+  watchMessageQueue.push({
+    msg: msg,
+    description: description || 'message'
+  });
+
+  pumpWatchMessageQueue();
+}
+
+function pumpWatchMessageQueue() {
+  if (watchMessageBusy) {
+    return;
+  }
+
+  if (watchMessageQueue.length === 0) {
+    return;
+  }
+
+  var queued = watchMessageQueue.shift();
+  watchMessageBusy = true;
+
+  Pebble.sendAppMessage(
+    queued.msg,
+    function() {
+      console.log('Sent watch ' + queued.description);
+      watchMessageBusy = false;
+      pumpWatchMessageQueue();
+    },
+    function(e) {
+      console.log('Failed to send watch ' + queued.description + ': ' + JSON.stringify(e));
+      watchMessageBusy = false;
+      pumpWatchMessageQueue();
+    }
+  );
+}
+
+function getMessageKey(keyName) {
+  if (typeof MessageKeys !== 'undefined' && MessageKeys[keyName] !== undefined) {
+    return MessageKeys[keyName];
+  }
+
+  return FALLBACK_KEYS[keyName];
+}
+
 function loadSettings() {
   var settings = {};
   var stored = localStorage.getItem('clay-settings');
@@ -86,6 +163,48 @@ function loadSettings() {
   return settings;
 }
 
+function recordRemoteLaunch() {
+  var xhr;
+  var payload;
+
+  if (!ANALYTICS_URL || ANALYTICS_URL === "http://YOUR-SERVER-IP:8787/event") {
+    console.log("Analytics URL not configured");
+    return;
+  }
+
+  payload = {
+    app: "BasicOpenHab",
+    event: "launch",
+    timestamp: new Date().toISOString()
+  };
+
+  try {
+    xhr = new XMLHttpRequest();
+    xhr.open("POST", ANALYTICS_URL, true);
+    xhr.setRequestHeader("Content-Type", "application/json");
+    xhr.setRequestHeader("x-analytics-token", ANALYTICS_TOKEN);
+    xhr.timeout = 10000;
+
+    xhr.onreadystatechange = function() {
+      if (xhr.readyState === 4) {
+        console.log("Analytics launch ping status=" + xhr.status);
+      }
+    };
+
+    xhr.onerror = function() {
+      console.log("Analytics launch ping failed");
+    };
+
+    xhr.ontimeout = function() {
+      console.log("Analytics launch ping timed out");
+    };
+
+    xhr.send(JSON.stringify(payload));
+  } catch (e) {
+    console.log("Analytics launch error: " + e.message);
+  }
+}
+
 function getItemName(settings, itemNumber) {
   return settings['ItemName' + itemNumber];
 }
@@ -104,47 +223,202 @@ function buildOpenhabUrl(settings, itemName) {
   return 'http://' + server + ':' + port + '/rest/items/' + encodeURIComponent(itemName);
 }
 
+function buildOpenhabStateUrl(settings, itemName) {
+  return buildOpenhabUrl(settings, itemName) + '/state';
+}
+
 function sendStatusToWatch(success) {
   var msg = {};
+  var statusKey = getMessageKey('Status');
 
-  if (typeof MessageKeys !== 'undefined' && MessageKeys.Status !== undefined) {
-    msg[MessageKeys.Status] = success ? 1 : 0;
-    console.log('Sending Status using MessageKeys.Status: ' + MessageKeys.Status);
-  } else if (FALLBACK_KEYS.Status !== null) {
-    msg[FALLBACK_KEYS.Status] = success ? 1 : 0;
-    console.log('Sending Status using fallback Status key: ' + FALLBACK_KEYS.Status);
-  } else {
-    console.log('Status key unknown; not sending status back to watch');
+  if (statusKey === undefined || statusKey === null) {
+    console.log('Status key unavailable; not sending status back to watch');
     return;
   }
 
-  Pebble.sendAppMessage(
+  msg[statusKey] = success ? 1 : 0;
+
+  queueWatchMessage(
     msg,
-    function() {
-      console.log('Status sent to watch: ' + success);
-    },
-    function(e) {
-      console.log('Failed to send status to watch: ' + JSON.stringify(e));
-    }
+    'status=' + (success ? 'OK' : 'FAILED')
   );
+}
+
+function sendItemStateToWatch(itemIndex, stateValue) {
+  var msg = {};
+  var stateIndexKey = getMessageKey('StateIndex');
+  var stateValueKey = getMessageKey('StateValue');
+
+  if (
+    stateIndexKey === undefined ||
+    stateIndexKey === null ||
+    stateValueKey === undefined ||
+    stateValueKey === null
+  ) {
+    console.log('StateIndex/StateValue keys unavailable; cannot send item state');
+    return;
+  }
+
+  msg[stateIndexKey] = itemIndex;
+  msg[stateValueKey] = stateValue;
+
+  queueWatchMessage(
+    msg,
+    'state index=' + itemIndex + ' value=' + stateValue
+  );
+}
+
+
+function sendSettingsToWatch() {
+  var settings = loadSettings();
+  var msg = {};
+
+  msg[FALLBACK_KEYS.OpenhabServer] = String(settings.OpenhabServer || '');
+  msg[FALLBACK_KEYS.OpenhabPort] = String(settings.OpenhabPort || '');
+  msg[FALLBACK_KEYS.ItemCount] = Number(settings.ItemCount || 4);
+
+  msg[FALLBACK_KEYS.ItemTitle1] = String(settings.ItemTitle1 || '');
+  msg[FALLBACK_KEYS.ItemName1] = String(settings.ItemName1 || '');
+
+  msg[FALLBACK_KEYS.ItemTitle2] = String(settings.ItemTitle2 || '');
+  msg[FALLBACK_KEYS.ItemName2] = String(settings.ItemName2 || '');
+
+  msg[FALLBACK_KEYS.ItemTitle3] = String(settings.ItemTitle3 || '');
+  msg[FALLBACK_KEYS.ItemName3] = String(settings.ItemName3 || '');
+
+  msg[FALLBACK_KEYS.ItemTitle4] = String(settings.ItemTitle4 || '');
+  msg[FALLBACK_KEYS.ItemName4] = String(settings.ItemName4 || '');
+
+  msg[FALLBACK_KEYS.ItemTitle5] = String(settings.ItemTitle5 || '');
+  msg[FALLBACK_KEYS.ItemName5] = String(settings.ItemName5 || '');
+
+  msg[FALLBACK_KEYS.ItemTitle6] = String(settings.ItemTitle6 || '');
+  msg[FALLBACK_KEYS.ItemName6] = String(settings.ItemName6 || '');
+
+  msg[FALLBACK_KEYS.ItemTitle7] = String(settings.ItemTitle7 || '');
+  msg[FALLBACK_KEYS.ItemName7] = String(settings.ItemName7 || '');
+
+  msg[FALLBACK_KEYS.ItemTitle8] = String(settings.ItemTitle8 || '');
+  msg[FALLBACK_KEYS.ItemName8] = String(settings.ItemName8 || '');
+
+  msg[FALLBACK_KEYS.ItemTitle9] = String(settings.ItemTitle9 || '');
+  msg[FALLBACK_KEYS.ItemName9] = String(settings.ItemName9 || '');
+
+  msg[FALLBACK_KEYS.ItemTitle10] = String(settings.ItemTitle10 || '');
+  msg[FALLBACK_KEYS.ItemName10] = String(settings.ItemName10 || '');
+
+  queueWatchMessage(msg, 'settings sync');
+}
+
+
+
+function fetchOpenhabItemState(itemIndex) {
+  var settings = loadSettings();
+  var itemNumber = itemIndex + 1;
+  var itemName = getItemName(settings, itemNumber);
+  var url;
+  var xhr;
+
+  if (itemIndex < 0 || itemIndex >= 10) {
+    console.log('State fetch index out of range: ' + itemIndex);
+    return;
+  }
+
+  if (!itemName) {
+    console.log('No item configured for state fetch index=' + itemIndex);
+    return;
+  }
+
+  url = buildOpenhabStateUrl(settings, itemName);
+
+  console.log('GET ' + url);
+
+  xhr = new XMLHttpRequest();
+  xhr.open('GET', url, true);
+  xhr.setRequestHeader('Accept', 'text/plain');
+  xhr.timeout = 8000;
+
+  xhr.onload = function() {
+    var state;
+
+    console.log(
+      'State response for ' +
+      itemName +
+      ': HTTP ' +
+      xhr.status +
+      ' body=' +
+      xhr.responseText
+    );
+
+    if (xhr.status >= 200 && xhr.status < 300) {
+      state = String(xhr.responseText || '').trim().toUpperCase();
+
+      if (state === 'ON') {
+        sendItemStateToWatch(itemIndex, 1);
+      } else if (state === 'OFF') {
+        sendItemStateToWatch(itemIndex, 0);
+      } else {
+        console.log('Unsupported/non-switch state for ' + itemName + ': ' + state);
+      }
+    } else {
+      console.log('Failed to fetch state for ' + itemName + ': HTTP ' + xhr.status);
+    }
+  };
+
+  xhr.onerror = function() {
+    console.log('State request failed for ' + itemName);
+  };
+
+  xhr.ontimeout = function() {
+    console.log('State request timed out for ' + itemName);
+  };
+
+  xhr.send();
+}
+
+function refreshAllOpenhabStates() {
+  var settings = loadSettings();
+  var count = Number(settings.ItemCount || 0);
+  var i;
+
+  if (isNaN(count) || count < 1) {
+    count = 1;
+  }
+
+  if (count > 10) {
+    count = 10;
+  }
+
+  console.log('Refreshing openHAB states for ' + count + ' configured items');
+
+  for (i = 0; i < count; i++) {
+    fetchOpenhabItemState(i);
+  }
 }
 
 function postToOpenhab(itemIndex, commandValue) {
   var settings = loadSettings();
-
-  /*
-    Watch sends zero-based item index:
-      0 = ItemName1
-      1 = ItemName2
-      ...
-      9 = ItemName10
-  */
   var itemNumber = itemIndex + 1;
   var itemName = getItemName(settings, itemNumber);
+  var body;
+  var url;
+  var xhr;
 
   console.log('itemIndex: ' + itemIndex);
   console.log('itemNumber: ' + itemNumber);
   console.log('itemName: ' + itemName);
+
+  if (itemIndex < 0 || itemIndex >= 10) {
+    console.log('CommandIndex out of range: ' + itemIndex);
+    sendStatusToWatch(false);
+    return;
+  }
+
+  if (commandValue !== 0 && commandValue !== 1) {
+    console.log('CommandValue invalid: ' + commandValue);
+    sendStatusToWatch(false);
+    return;
+  }
 
   if (!itemName) {
     console.log('No openHAB item configured for index: ' + itemIndex);
@@ -152,22 +426,15 @@ function postToOpenhab(itemIndex, commandValue) {
     return;
   }
 
-  /*
-    openHAB Switch items expect text commands:
-      ON
-      OFF
-
-    The watch sends 1 or 0 to the phone, but the phone sends ON/OFF to openHAB.
-  */
-  var body = commandValue === 1 ? 'ON' : 'OFF';
-  var url = buildOpenhabUrl(settings, itemName);
+  body = commandValue === 1 ? 'ON' : 'OFF';
+  url = buildOpenhabUrl(settings, itemName);
 
   console.log('POST ' + url + ' body=' + body);
 
-  var xhr = new XMLHttpRequest();
-
+  xhr = new XMLHttpRequest();
   xhr.open('POST', url, true);
   xhr.setRequestHeader('Content-Type', 'text/plain');
+  xhr.timeout = 8000;
 
   xhr.onload = function() {
     console.log('openHAB response HTTP status: ' + xhr.status);
@@ -175,6 +442,7 @@ function postToOpenhab(itemIndex, commandValue) {
 
     if (xhr.status >= 200 && xhr.status < 300) {
       sendStatusToWatch(true);
+      fetchOpenhabItemState(itemIndex);
     } else {
       sendStatusToWatch(false);
     }
@@ -190,23 +458,31 @@ function postToOpenhab(itemIndex, commandValue) {
     sendStatusToWatch(false);
   };
 
-  xhr.timeout = 8000;
   xhr.send(body);
 }
 
 Pebble.addEventListener('ready', function() {
   console.log('openHAB Pebble app ready');
 
+  recordRemoteLaunch();
+
   if (typeof MessageKeys !== 'undefined') {
     console.log('MessageKeys available');
     console.log('MessageKeys.CommandIndex = ' + MessageKeys.CommandIndex);
     console.log('MessageKeys.CommandValue = ' + MessageKeys.CommandValue);
     console.log('MessageKeys.Status = ' + MessageKeys.Status);
+    console.log('MessageKeys.StateIndex = ' + MessageKeys.StateIndex);
+    console.log('MessageKeys.StateValue = ' + MessageKeys.StateValue);
   } else {
-    console.log('MessageKeys is undefined');
-    console.log('Using fallback CommandIndex key: ' + FALLBACK_KEYS.CommandIndex);
-    console.log('Using fallback CommandValue key: ' + FALLBACK_KEYS.CommandValue);
+    console.log('MessageKeys is undefined; using fallback keys');
+    console.log('Fallback CommandIndex key: ' + FALLBACK_KEYS.CommandIndex);
+    console.log('Fallback CommandValue key: ' + FALLBACK_KEYS.CommandValue);
+    console.log('Fallback Status key: ' + FALLBACK_KEYS.Status);
+    console.log('Fallback StateIndex key: ' + FALLBACK_KEYS.StateIndex);
+    console.log('Fallback StateValue key: ' + FALLBACK_KEYS.StateValue);
   }
+  sendSettingsToWatch();
+  refreshAllOpenhabStates();
 });
 
 Pebble.addEventListener('appmessage', function(e) {
@@ -216,31 +492,20 @@ Pebble.addEventListener('appmessage', function(e) {
   var itemIndex;
   var commandValue;
   var payloadKey;
+  var commandIndexKey = getMessageKey('CommandIndex');
+  var commandValueKey = getMessageKey('CommandValue');
 
-  /*
-    Dump all received payload keys.
-    This helps if CloudPebble regenerates numeric message-key IDs again.
-  */
   for (payloadKey in e.payload) {
     if (e.payload.hasOwnProperty(payloadKey)) {
       console.log('Payload key: ' + payloadKey + ' value: ' + e.payload[payloadKey]);
     }
   }
 
-  if (typeof MessageKeys !== 'undefined') {
-    console.log('Using MessageKeys object');
+  console.log('Using CommandIndex key: ' + commandIndexKey);
+  console.log('Using CommandValue key: ' + commandValueKey);
 
-    console.log('MessageKeys.CommandIndex = ' + MessageKeys.CommandIndex);
-    console.log('MessageKeys.CommandValue = ' + MessageKeys.CommandValue);
-
-    itemIndex = e.payload[MessageKeys.CommandIndex];
-    commandValue = e.payload[MessageKeys.CommandValue];
-  } else {
-    console.log('MessageKeys undefined, using hardcoded fallback keys');
-
-    itemIndex = e.payload[FALLBACK_KEYS.CommandIndex];
-    commandValue = e.payload[FALLBACK_KEYS.CommandValue];
-  }
+  itemIndex = e.payload[commandIndexKey];
+  commandValue = e.payload[commandValueKey];
 
   console.log('Resolved itemIndex: ' + itemIndex);
   console.log('Resolved commandValue: ' + commandValue);
@@ -264,4 +529,15 @@ Pebble.addEventListener('appmessage', function(e) {
   }
 
   postToOpenhab(itemIndex, commandValue);
+});
+
+Pebble.addEventListener('webviewclosed', function(e) {
+  console.log('Configuration closed');
+
+  /*
+    Clay normally saves settings to localStorage.
+    We then manually push the saved settings to the watch using fixed numeric keys.
+  */
+  sendSettingsToWatch();
+  refreshAllOpenhabStates();
 });
